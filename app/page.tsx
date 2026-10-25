@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import SVGDefs from "@/components/shared/SVGDefs";
 import Nav from "@/components/layout/Nav";
+import Footer from "@/components/layout/Footer";
 import Hero from "@/components/sections/Hero";
 import Tracks from "@/components/sections/Tracks";
 import Timeline from "@/components/sections/Timeline";
@@ -65,6 +66,7 @@ export default function Home() {
         <Prizes />
         <FAQs />
       </main>
+      <Footer />
       <InfoModal />
       <RegisterModal />
       <Toast />

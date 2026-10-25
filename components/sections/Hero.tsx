@@ -4,11 +4,41 @@ import { useEffect, useRef } from "react";
 import Image from "next/image";
 import { DISCORD_URL } from "@/data/constants";
 
+type Pt = { x: number; y: number };
+type Seg = { p0: Pt; p1: Pt; p2: Pt; p3: Pt; dur: number };
+type BirdRoute = {
+  delay: number;
+  intro: [Seg, Seg, Seg];
+  introEnd: number;
+  entryAngle: number;
+  speed: number;
+  rxMul: number;
+  ryMul: number;
+  size: number;
+  phase: number;
+};
+
+function cubicPoint(s: Seg, t: number): Pt {
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const c = 3 * u * t * t;
+  const d = t * t * t;
+  return {
+    x: a * s.p0.x + b * s.p1.x + c * s.p2.x + d * s.p3.x,
+    y: a * s.p0.y + b * s.p1.y + c * s.p2.y + d * s.p3.y,
+  };
+}
+
 export default function Hero() {
   const boxRef = useRef<HTMLDivElement>(null);
   const cvRef = useRef<HTMLCanvasElement>(null);
+  const birdsCvRef = useRef<HTMLCanvasElement>(null);
   const lampRef = useRef<HTMLButtonElement>(null);
   const artRef = useRef<HTMLDivElement>(null);
+  const plateRef = useRef<HTMLDivElement>(null);
+  const secRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const lampOnRef = useRef(true);
 
   useEffect(() => {
@@ -45,7 +75,6 @@ export default function Hero() {
     const R = rng(42);
     const dust: { x: number; y: number; vx: number; vy: number; r: number; a: number; light: boolean; ph: number }[] = [];
     for (let i = 0; i < 44; i++) dust.push({ x: R() * DW, y: R() * DH, vx: (R() - .5) * 5, vy: -(3 + R() * 7), r: .7 + R() * 1.6, a: .25 + R() * .35, light: R() > .55, ph: R() * 6.28 });
-    const birds = [{ y: 392, x: 120, v: -26, sz: 9, ph: 0 }, { y: 424, x: 380, v: -19, sz: 7, ph: 2 }, { y: 374, x: 560, v: -33, sz: 11, ph: 4 }];
     const beacons: [number, number, number][] = [[418, 364, 0], [652, 382, 1.7], [704, 362, 3.1], [596, 408, 4.4]];
     const steam: { x: number; y: number; n: number }[] = [{ x: 252, y: 517, n: 3 }, { x: 930, y: 575, n: 3 }];
     const strands: [number, number, number][] = [[805, 398, -1.9], [818, 393, -1.55], [830, 397, -1.25], [795, 404, -2.2], [838, 404, -1.0], [812, 390, -1.7]];
@@ -66,10 +95,6 @@ export default function Hero() {
         ctx.save(); ctx.translate(x, m.y); ctx.scale(m.k, .16 * m.k); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 200, 0, 6.283); ctx.fill(); ctx.restore();
       });
       ctx.strokeStyle = "#14110e"; ctx.lineWidth = 1.5; ctx.lineCap = "round";
-      birds.forEach((b) => {
-        const x = (((b.x + b.v * t) % 700) + 700) % 700 + 220, y = b.y + Math.sin(t * .7 + b.ph) * 6, f = Math.sin(t * 10 + b.ph), dy = -f * b.sz * .6;
-        ctx.beginPath(); ctx.moveTo(x - b.sz, y + dy); ctx.quadraticCurveTo(x - b.sz * .5, y - b.sz * .35, x, y); ctx.quadraticCurveTo(x + b.sz * .5, y - b.sz * .35, x + b.sz, y + dy); ctx.stroke();
-      });
       beacons.forEach((b) => {
         let k = Math.max(0, Math.sin(t * 2.4 + b[2])); k = k * k * k; const a = .15 + .85 * k;
         const g = ctx.createRadialGradient(b[0], b[1], 0, b[0], b[1], 10); g.addColorStop(0, "rgba(214,60,44," + (a * .6).toFixed(3) + ")"); g.addColorStop(1, "rgba(214,60,44,0)");
@@ -171,6 +196,236 @@ export default function Hero() {
     };
   }, []);
 
+  // Birds leave the artwork, sweep across the hero, then circle the title.
+  useEffect(() => {
+    const cv = birdsCvRef.current;
+    const hero = secRef.current;
+    const titleEl = titleRef.current;
+    const plateEl = plateRef.current;
+    if (!cv || !hero || !titleEl || !plateEl) return;
+
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+
+    const canvasEl = cv;
+    const sectionEl = hero;
+    const headingEl = titleEl;
+    const artEl = plateEl;
+    const c = ctx;
+
+    let W = 0, H = 0, dpr = 1;
+    let tx = 0, ty = 0, rx = 0, ry = 0;
+    let birds: BirdRoute[] = [];
+    let startedAt = 0;
+    let running = false, onScreen = true, raf = 0;
+    let lastSig = "";
+
+    function drawBird(route: BirdRoute, x: number, y: number, time: number, flapSpeed: number) {
+      const dy = Math.sin(time * flapSpeed + route.phase) * route.size * .62;
+      c.beginPath();
+      c.moveTo(x - route.size, y + dy);
+      c.quadraticCurveTo(x - route.size * .45, y - route.size * .38, x, y);
+      c.quadraticCurveTo(x + route.size * .45, y - route.size * .38, x + route.size, y + dy);
+
+      c.strokeStyle = "rgba(245, 233, 210, .68)";
+      c.lineWidth = 3.4;
+      c.stroke();
+      c.strokeStyle = "#14110e";
+      c.lineWidth = 1.4;
+      c.stroke();
+    }
+
+    function build() {
+      const hr = sectionEl.getBoundingClientRect();
+      const tr = headingEl.getBoundingClientRect();
+      const pr = artEl.getBoundingClientRect();
+      if (!hr.width || !hr.height) return;
+
+      const nextW = Math.round(hr.width);
+      const nextH = Math.round(hr.height);
+      const nextDpr = Math.min(2, window.devicePixelRatio || 1);
+      const nextTx = tr.left - hr.left + tr.width / 2;
+      const nextTy = tr.top - hr.top + tr.height / 2;
+      const nextRx = Math.max(120, Math.min(tr.width / 2 + Math.max(24, tr.height * .35), nextTx - 12, nextW - nextTx - 12));
+      const nextRy = Math.max(70, Math.min(tr.height / 2 + Math.max(36, tr.height * .5), nextTy - 16, nextH - nextTy - 12));
+
+      const sig = [nextW, nextH, nextDpr, nextTx, nextTy, nextRx, nextRy, pr.left, pr.top, pr.width, pr.height]
+        .map(Math.round).join(",");
+      if (sig === lastSig) return;
+      lastSig = sig;
+
+      W = nextW; H = nextH; dpr = nextDpr;
+      tx = nextTx; ty = nextTy; rx = nextRx; ry = nextRy;
+      canvasEl.width = Math.round(W * dpr);
+      canvasEl.height = Math.round(H * dpr);
+
+      const plateLeft = pr.left - hr.left;
+      const plateTop = pr.top - hr.top;
+      const plateW = pr.width;
+      const plateH = pr.height;
+
+      // Spawn points inside the window in the artwork (982 x 702 source space).
+      const spawn: [number, number, number][] = [
+        [470, 400, 10],
+        [600, 378, 8],
+        [715, 440, 12],
+      ];
+
+      const leftX = Math.max(8, tx - rx - 70);
+      const leftY = ty - ry * .55;
+      const rightX = W - 52;
+      const rightY = ty + ry * .35;
+
+      const speeds = [.36, .43, .3];
+      const rxMuls = [1, .84, 1.12];
+      const ryMuls = [1, .9, 1.08];
+
+      birds = spawn.map(([ix, iy, size], i) => {
+        const A = {
+          x: plateLeft + (ix / 982) * plateW,
+          y: plateTop + (iy / 702) * plateH,
+        };
+        const B = { x: leftX - i * 6, y: leftY - i * 10 };
+        const C = { x: rightX - i * 14, y: rightY + i * 12 };
+        const entryAngle = -0.18 - i * 0.34;
+        const D = {
+          x: tx + Math.cos(entryAngle) * rx * rxMuls[i],
+          y: ty + Math.sin(entryAngle) * ry * ryMuls[i],
+        };
+
+        const out: Seg = {
+          p0: A,
+          p1: { x: A.x - 150, y: A.y - 110 },
+          p2: { x: B.x + 130, y: B.y - 50 },
+          p3: B,
+          dur: 2.4,
+        };
+        const cross: Seg = {
+          p0: B,
+          p1: { x: B.x - 70, y: B.y + 90 },
+          p2: { x: C.x - 230, y: C.y + 120 },
+          p3: C,
+          dur: 3.2,
+        };
+        const join: Seg = {
+          p0: C,
+          p1: { x: C.x + 150, y: C.y - 85 },
+          p2: {
+            x: D.x - Math.sin(entryAngle) * rxMuls[i] * 0.55 * rx,
+            y: D.y + Math.cos(entryAngle) * ryMuls[i] * 0.55 * ry,
+          },
+          p3: D,
+          dur: 2.2,
+        };
+
+        return {
+          delay: i * 1.35,
+          intro: [out, cross, join],
+          introEnd: out.dur + cross.dur + join.dur,
+          entryAngle,
+          speed: speeds[i],
+          rxMul: rxMuls[i],
+          ryMul: ryMuls[i],
+          size,
+          phase: i * 2.1,
+        };
+      });
+
+      startedAt = performance.now();
+    }
+
+    function frame(now: number) {
+      const time = now / 1000;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.lineCap = "round";
+      c.lineJoin = "round";
+
+      const elapsedAll = (now - startedAt) / 1000;
+
+      birds.forEach((b) => {
+        const e = elapsedAll - b.delay;
+        if (e < 0) return;
+
+        let pos: Pt;
+        let flapSpeed = 10;
+
+        if (e < b.intro[0].dur) {
+          pos = cubicPoint(b.intro[0], e / b.intro[0].dur);
+          flapSpeed = 12;
+        } else if (e < b.intro[0].dur + b.intro[1].dur) {
+          pos = cubicPoint(b.intro[1], (e - b.intro[0].dur) / b.intro[1].dur);
+        } else if (e < b.introEnd) {
+          pos = cubicPoint(b.intro[2], (e - b.intro[0].dur - b.intro[1].dur) / b.intro[2].dur);
+        } else {
+          const o = e - b.introEnd;
+          const angle = b.entryAngle - b.speed * o;
+          const wob = 1 + Math.sin(o * .8 + b.phase) * .04;
+          pos = {
+            x: tx + Math.cos(angle) * rx * b.rxMul * wob + Math.sin(time * 1.3 + b.phase) * 2,
+            y: ty + Math.sin(angle) * ry * b.ryMul * wob + Math.sin(o * 1.5 + b.phase) * 3,
+          };
+          flapSpeed = 7;
+        }
+
+        drawBird(b, pos.x, pos.y, time, flapSpeed);
+      });
+    }
+
+    function loop(now: number) {
+      if (!running) return;
+      frame(now);
+      raf = requestAnimationFrame(loop);
+    }
+
+    function sync() {
+      const want = onScreen && !document.hidden;
+      if (want && !running) {
+        running = true;
+        raf = requestAnimationFrame(loop);
+      } else if (!want && running) {
+        running = false;
+        cancelAnimationFrame(raf);
+      }
+    }
+
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleBuild = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(build, 120);
+    };
+
+    const io = new IntersectionObserver((entries) => {
+      onScreen = entries[0].isIntersecting;
+      sync();
+    });
+    io.observe(hero);
+
+    const ro = new ResizeObserver(scheduleBuild);
+    ro.observe(hero);
+    ro.observe(titleEl);
+
+    window.addEventListener("resize", scheduleBuild);
+    document.addEventListener("visibilitychange", sync);
+
+    build();
+    sync();
+
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+      clearTimeout(resizeTimer);
+      io.disconnect();
+      ro.disconnect();
+      window.removeEventListener("resize", scheduleBuild);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+
   const goTo = (hash: string) => {
     const t = document.getElementById(hash.replace("#", ""));
     if (!t) return;
@@ -178,7 +433,13 @@ export default function Hero() {
   };
 
   return (
-    <section className="sec hero" id="about" aria-label="About Baddiethon">
+    <section className="sec hero" id="about" aria-label="About Baddiethon" ref={secRef}>
+      <canvas
+        className="birds-canvas"
+        ref={birdsCvRef}
+        aria-hidden="true"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 8, pointerEvents: "none" }}
+      ></canvas>
       <div className="grunge c-tl"></div><div className="grunge c-bl sm"></div>
       <div className="scrap" style={{ left: 0, bottom: 80, width: 46, height: 60 }}></div>
       <div className="wrap">
@@ -187,7 +448,7 @@ export default function Hero() {
             <div className="eyebrow hero-eyebrow"><span>V0 / 2026</span><i></i><span>Online Hackathon</span></div>
             <div className="title-wrap">
               <button className="star-btn hero-star" type="button" data-wiggle aria-label="Sparkle"><svg className="star" viewBox="0 0 100 100"><use href="#i-star5"/></svg></button>
-              <h1 className="h-display hero-title">Baddiethon</h1>
+              <h1 className="h-display hero-title" ref={titleRef}>Baddiethon</h1>
               <svg className="oval" viewBox="0 0 200 100" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="100" cy="50" rx="98" ry="46" pathLength="1" transform="rotate(-3 100 50)"/><ellipse cx="102" cy="51" rx="96" ry="43" pathLength="1" transform="rotate(2 100 50)"/></svg>
             </div>
             <p className="tag">Bored of traditional hackathons?<br />We got you bro!</p>
@@ -201,7 +462,7 @@ export default function Hero() {
 
           <div className="hero-art" id="heroArt" ref={artRef}>
             <div className="live" id="live" ref={boxRef}>
-              <div className="plate">
+              <div className="plate" ref={plateRef}>
                 <Image id="liveImg" src="/hero-art.webp" width={982} height={702} alt="Ink sketch of a builder slouched in a chair at a laptop, a city skyline in the window and a note that reads: In 2026, building is only the first step btw. Xavier." priority />
                 <canvas id="fx" aria-hidden="true" ref={cvRef}></canvas>
                 <button className="lamp-hit" id="lamp" type="button" aria-pressed="true" aria-label="Turn the desk lamp glow off" ref={lampRef}></button>

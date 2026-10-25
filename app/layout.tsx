@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Bodoni_Moda, Caveat, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import LenisProvider from "@/components/shared/LenisProvider";
+import CrystalCursor from "@/components/shared/CrystalCursor";
 
 const bodoni = Bodoni_Moda({
   variable: "--font-display",
@@ -38,7 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${bodoni.variable} ${caveat.variable} ${instrument.variable} ${jetbrains.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col"><LenisProvider>{children}</LenisProvider></body>
+      <body className="min-h-full flex flex-col"><LenisProvider>{children}</LenisProvider><CrystalCursor /></body>
     </html>
   );
 }

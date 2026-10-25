@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { STEPS } from "@/data/constants";
 
 const YEAR = 2026;
@@ -21,15 +21,21 @@ function status(s: { at: [number, number]; end?: [number, number] }, nowMs: numb
   return { tag: "Done", done: true };
 }
 
-function subscribe(cb: () => void) {
-  window.addEventListener("resize", cb);
-  return () => window.removeEventListener("resize", cb);
-}
-const getNow = () => Date.now();
-const getServerNow = () => 0;
-
 export default function Timeline() {
-  const now = useSyncExternalStore(subscribe, getNow, getServerNow);
+  // Start at 0 so the server and the hydration render match, then tick after mount.
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    tick();
+    const id = setInterval(tick, 60_000);
+    window.addEventListener("resize", tick);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("resize", tick);
+    };
+  }, []);
+
   const steps = STEPS.map((s) => ({ ...s, _st: status(s, now) }));
   const nextIdx = (() => {
     let ni = -1;
